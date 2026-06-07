@@ -1,0 +1,1785 @@
+---
+title: "Exploring Air Pollution Patterns and Environmental Factors"
+author: "**Team Members:**\nElissa El Haber\n- Elissa Sbeity\n- Sara El Habhab\n"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+  pdf_document:
+    toc: true
+    toc_depth: '3'
+  word_document:
+    toc: true
+    toc_depth: '3'
+subtitle: "DSC603: R Programming - Dr. Joseph Rebehmed"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  comment = NA,
+  fig.width = 7,
+  fig.height = 4
+)
+
+# Required libraries
+library(readr)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(stringr)
+library(tibble)
+library(ggplot2)
+library(scales)
+library(plotly)
+library(htmlwidgets)
+library(purrr)
+library(kableExtra)
+library(broom)
+library(ggcorrplot)
+library(ggridges)
+library(patchwork)
+library(car)
+```
+
+# Phase 1: Data Preparation and Cleaning
+
+## 1. Dataset Source & Motivation
+
+The Air Quality dataset in the UCI Machine Learning Repository is a set of data used in environmental monitoring by chemical sensors in an Italian city over a period of time ranging from March 2004 to February 2005. It has hourly readings of various pollutants such as CO, NOx, and NO₂, as well as meteorological readings such as temperature and humidity.
+
+This dataset was chosen because it has real sensor data that exhibits common data quality problems like missing values and data formats. It is useful in practicing data cleaning and preparation techniques in R.
+
+**Dataset source:** <https://archive.ics.uci.edu/dataset/360/air+quality>
+
+
+Possible research questions:
+
+- How do air pollutant concentrations (CO, NOx, and NO₂) vary over time?
+- Is there a relationship between meteorological variables (temperature, humidity) and air pollution levels?
+- Are there daily or seasonal patterns in air quality measurements?
+- Which pollutants show the highest variability throughout the monitoring period?
+- Can environmental conditions help explain changes in pollution levels?
+
+---
+
+## 2. Data Import
+
+The dataset was imported into R using the read_csv() function from the readr package. A copy of the raw dataset was stored to ensure that the original data remains unchanged during the cleaning process.
+
+```{r}
+# Load the dataset from the CSV file into R
+air_raw <- read_csv("AirQualityUCI.csv")
+air <- air_raw
+
+# View first rows
+head(air)
+```
+
+---
+
+## 3. Data Structure Inspection
+
+After importing the dataset, an initial inspection was performed to understand the structure of the data. This included examining the variable types, summary statistics, dimensions of the dataset, and the column names.
+
+```{r}
+# Examine the structure of the dataset and data types of each column
+glimpse(air)
+```
+
+The structure of the dataset shows the data types of each variable. Most variables are numerical measurements from environmental sensors, while the Date variable is initially stored as character values.
+
+```{r}
+# Generate summary statistics for each variable
+summary(air)
+```
+
+The summary statistics provide an overview of the distribution of each variable, including minimum, maximum, mean, and quartile values. Some unusual values appear due to missing values coded as -200.
+
+```{r}
+# Check the number of rows and columns
+dim(air)
+```
+
+The dataset contains 9,357 observations (rows) and 15 variables (columns).
+
+```{r}
+# Display the names of all variables in the dataset
+colnames(air)
+```
+
+This output shows the names of all variables in the dataset, allowing us to check for any inconsistencies or formatting issues in the column names.
+
+---
+
+## 4. Issues Identified
+
+The initial inspection of the provided dataset showed some issues that need to be addressed before moving on to the next steps. The identification of these issues is an essential part of the process that ensures the quality and accuracy of the provided information. The identified issues during the exploration stage are listed below:
+
+- The missing value indicator is set to the value -200, and the minimum value for some variables in the summary statistics is represented by the value -200.
+- The Date variable is stored as character variable rather than date format.
+- The dataset contains separate Date and Time columns, which makes chronological analysis less convenient and requires combining them into a single timestamp variable.
+- Some of the summary statistics are not realistic (for example, the mean value is negative), mainly because the placeholder value -200 is part of the calculations.
+- Some of the column names include special characters (for example, CO(GT), NOx(GT)), which makes the code less readable.
+
+
+---
+
+## 5. Data Cleaning
+
+### 5.1 Handling Encoded Missing Values
+
+According to the dataset documentation, missing observations are represented by the value -200. Since R does not automatically recognize this value as missing data, these entries must be replaced with NA to allow proper handling during analysis.
+
+```{r}
+# Replace -200 placeholders with NA
+air[air == -200] <- NA
+
+# Check missing values per column
+# Identify columns that contain NA values
+na_cols <- names(air)[colSums(is.na(air)) > 0]
+na_cols
+```
+
+---
+
+### 5.2 Duplicate Observations
+
+The dataset was examined for duplicate rows to ensure that each observation represents a unique measurement. Removing duplicates prevents repeated entries from influencing summary statistics and subsequent analysis.
+
+```{r}
+# Count duplicate rows
+sum(duplicated(air))
+
+# Remove duplicates if any
+air <- air %>% distinct()
+```
+---
+
+### 5.3 Standardizing Column Names
+
+Some variable names contained punctuation and special characters that reduce readability and may complicate data manipulation. To improve clarity and consistency, column names were standardized into a simpler and more readable format.
+
+```{r}
+# Standardize column names to improve readability
+air <- air %>%
+  rename(
+    CO_GT        = `CO(GT)`,
+    PT08_S1_CO   = `PT08.S1(CO)`,
+    NMHC_GT      = `NMHC(GT)`,
+    C6H6_GT      = `C6H6(GT)`,
+    PT08_S2_NMHC = `PT08.S2(NMHC)`,
+    NOx_GT       = `NOx(GT)`,
+    PT08_S3_NOx  = `PT08.S3(NOx)`,
+    NO2_GT       = `NO2(GT)`,
+    PT08_S4_NO2  = `PT08.S4(NO2)`,
+    PT08_S5_O3   = `PT08.S5(O3)`,
+    Temperature       = T,
+    Relative_Humidity = RH,
+    Absolute_Humidity = AH
+  )
+
+# Check
+colnames(air)
+```
+
+---
+
+### 5.4 Converting Date and Time Variables
+
+The Date variable was initially stored as a character string, which prevents it from being used directly in time-based analyses. To resolve this issue, the variable was converted into a proper date format. In addition, a new variable named DateTime was created to represent the complete timestamp of each observation, enabling easier chronological analysis of the air quality measurements.
+
+```{r}
+# Convert Date
+air$Date <- as.Date(air$Date, format = "%m/%d/%Y")
+
+# Create DateTime variable
+air$DateTime <- as.POSIXct(paste(air$Date, air$Time), format = "%Y-%m-%d %H:%M:%S")
+
+# Remove Time column
+air <- air %>% select(-Time)
+```
+
+---
+
+### 5.5 Missing Value Assessment
+
+After replacing the encoded missing values with NA, the number of missing observations in each column was calculated. This step helps identify variables with significant missing data and informs the choice of imputation methods.
+
+```{r}
+# Count the number of missing values (NA) in each column of the dataset
+colSums(is.na(air))
+```
+---
+
+### 5.6 Distribution Analysis
+
+The distributions of numerical variables containing missing values were examined using histograms. Visualizing the distributions helps determine whether the mean or median is a more appropriate method for imputing missing values.
+
+```{r}
+na_cols <- names(air)[colSums(is.na(air)) > 0]
+na_cols
+
+# Visualize the distribution of variables with missing values
+num_na_cols <- na_cols[sapply(na_cols, function(col) is.numeric(air[[col]]))]
+par(mfrow = c(2,2))
+for (col in num_na_cols) {
+  hist(air[[col]],
+       main = paste("Distribution:", col),
+       xlab = col)
+}
+par(mfrow = c(1,1))
+```
+
+---
+
+### 5.7 Missing Value Imputation
+
+Missing values were replaced using statistical imputation techniques. Depending on the distribution of each variable, either the mean or the median was used to substitute missing observations. This approach preserves the overall structure of the data while minimizing the impact of missing values.
+
+```{r}
+# Loop through each numeric column that contains missing values
+for (col in num_na_cols) {
+
+  x   <- air[[col]]
+  m   <- mean(x, na.rm = TRUE)
+  med <- median(x, na.rm = TRUE)
+  s   <- sd(x, na.rm = TRUE)
+
+  use_median <- abs(m - med) > 0.25 * s
+  fill_value <- if (use_median) med else m
+
+  air[[col]][is.na(air[[col]])] <- fill_value
+}
+```
+
+---
+
+### 5.8 Removal of Invalid Time Records
+
+Rows with missing or invalid DateTime values were removed from the dataset, since accurate time information is necessary for analyzing temporal patterns in air quality measurements.
+
+```{r}
+# Remove rows where the DateTime variable is missing (NA)
+air <- air %>%
+  filter(!is.na(DateTime))
+```
+
+---
+
+## 6. Cleaned Dataset Overview
+
+After completing the data cleaning procedures, the dataset was inspected again to confirm that the identified issues had been successfully addressed. This step ensures that missing values, data types, and structural inconsistencies have been properly handled.
+
+Basic descriptive statistics and the structure of the cleaned dataset were examined to verify that the dataset is ready for further analysis.
+
+```{r}
+dim(air)
+```
+
+```{r}
+colSums(is.na(air))
+```
+
+```{r}
+glimpse(air)
+```
+
+```{r}
+summary(air)
+```
+---
+
+## 7. Exporting the Clean Dataset
+
+To preserve the integrity of the original dataset, the cleaned version was saved as a new CSV file. This allows the cleaned dataset to be reused in future analyses without modifying the raw data.
+
+```{r}
+write_csv(air, "AirQualityUCI_clean.csv")
+```
+
+---
+
+## 8. Written Summary
+
+This project has focused on the initial preparation and cleaning of the Air Quality dataset from the UCI Machine Learning Repository, which contains hourly readings of air pollutants and meteorological parameters measured by environmental sensors from March 2004 to February 2005. The aim of this phase is to import the dataset into R, understand the structure of the dataset, identify the quality of the data, and perform the necessary cleaning of the data for further analysis in the subsequent phases of the project.
+
+As the dataset is imported into R for analysis, several problems were identified in the dataset. These include the presence of encoded missing values in the dataset, where missing values are encoded using -200. Additionally, the dataset has inconsistent data types and special characters in the column names. The Date variable in the dataset is stored as a character variable and therefore requires conversion into the correct date format for analysis in the subsequent phases of the project.
+
+A series of data cleaning procedures were performed on the Air Quality dataset. These include the replacement of encoded missing values with NA values, the standardization of the column names for better readability, and the conversion of the Date variable into the correct date format. Additionally, a new variable named DateTime is created for the complete timestamp of the observations in the dataset.
+
+Missing values were then analyzed and replaced using either the mean or the median, depending on the distribution of each variable. Two observations containing missing DateTime values were removed because time information is essential for temporal analysis.
+
+After completing these steps, the dataset contained consistent variable formats and properly handled missing values. The cleaned dataset was exported as a new file so that the original raw data remains unchanged and the prepared dataset can be used for further analysis in later phases of the project.
+
+## ───────────────────────
+
+# Phase 2: Exploratory Data Visualization and Insights
+
+---
+
+## 9. Introduction
+
+After completing the data cleaning in Phase 1, the dataset is now fully structured, consistent, and free from missing value issues, making it suitable for further analysis.
+
+The second phase of this project focuses on transforming the cleaned Air Quality dataset into meaningful and interactive visualizations. These visualizations are designed to reveal underlying patterns in the data, including temporal trends, relationships between environmental variables, distributional characteristics, and variability in air pollution levels.
+
+A set of appropriate visualization techniques was carefully selected to address the research questions and ensure that the insights extracted from the dataset are clear, interpretable, and data-driven.
+
+---
+
+## 10. Visualization Setup
+```{r}
+# Consistent color theme for all plots
+colors_theme <- list(
+  co  = "#E63946",   # red for CO
+  no2 = "#457B9D",   # blue for NO2
+  nox = "#2A9D8F",   # green for NOx
+  background = "white",   # plot background
+  grid = "#EAEAEA"        # grid lines
+)
+
+# Create features 
+air <- air %>%
+  mutate(
+    Hour      = hour(DateTime),
+    Month     = month(DateTime, label = TRUE, abbr = TRUE),
+    Date_only = as.Date(DateTime),
+    Season    = case_when(
+      month(DateTime) %in% c(12, 1, 2) ~ "Winter",
+      month(DateTime) %in% c(3, 4, 5)  ~ "Spring",
+      month(DateTime) %in% c(6, 7, 8)  ~ "Summer",
+      TRUE ~ "Autumn"
+    ),
+    Season = factor(Season, levels = c("Winter", "Spring", "Summer", "Autumn"))
+  )
+```
+
+---
+
+## 11. Plot 1: Monthly Trend of Major Air Pollutants
+
+**Why this visualization?**
+
+A multi-panel line chart was chosen to observe long-term temporal trends across different pollutants simultaneously. By using separate y-axes in a stacked layout, we can compare the peaks and valleys of CO, NO₂, and NOx without the scale of one pollutant (like NOx) flattening the others.
+
+**Insights:**
+
+The visualization reveals that pollutant levels are not static; they exhibit significant seasonal fluctuations. Specifically, CO and NOx show synchronized peaks during the colder months, suggesting that atmospheric stagnation or increased heating emissions may influence air quality during these periods.
+
+**Customization:**
+
+- Interactive Tooltips: Custom hover text provides precise average values for each month, allowing for a level of detail that static lines cannot offer.
+
+- Color Consistency: Colors were mapped to specific pollutants (Red for CO, Blue for NO₂, Green for NOx) to create a visual "shorthand" used throughout the entire report.
+
+```{r plot1, fig.cap="**Figure 1.** Monthly trends of CO(GT), NO2(GT), and NOx(GT). The three panels highlight how pollutant concentrations change over time, revealing seasonal fluctuations and long-term variations in air quality."}
+
+# Prepare monthly data (aggregate raw hourly data into monthly averages)
+monthly_pollution <- air %>%
+  mutate(Month_Date = floor_date(Date_only, unit = "month")) %>%  # extract month from date
+  group_by(Month_Date) %>%
+  summarise(
+    CO_GT  = mean(CO_GT,  na.rm = TRUE),   # average CO per month
+    NOx_GT = mean(NOx_GT, na.rm = TRUE),  # average NOx per month
+    NO2_GT = mean(NO2_GT, na.rm = TRUE),  # average NO2 per month
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = c(CO_GT, NOx_GT, NO2_GT),  # reshape data to long format for plotting
+    names_to  = "Pollutant",
+    values_to = "Average_Value"
+  ) %>%
+  mutate(
+    Pollutant = dplyr::recode(
+      Pollutant,
+      "CO_GT"  = "CO(GT)",
+      "NO2_GT" = "NO2(GT)",
+      "NOx_GT" = "NOx(GT)"
+    )  # rename pollutants for readability
+  )
+
+# Split dataset by pollutant (one dataset per subplot)
+co_data  <- monthly_pollution %>% filter(Pollutant == "CO(GT)")
+no2_data <- monthly_pollution %>% filter(Pollutant == "NO2(GT)")
+nox_data <- monthly_pollution %>% filter(Pollutant == "NOx(GT)")
+
+# Create hover text for interactivity
+co_text  <- paste("Pollutant: CO(GT)", "<br>Month:", format(co_data$Month_Date, "%b %Y"),
+                  "<br>Average:", round(co_data$Average_Value, 2))
+no2_text <- paste("Pollutant: NO2(GT)", "<br>Month:", format(no2_data$Month_Date, "%b %Y"),
+                  "<br>Average:", round(no2_data$Average_Value, 2))
+nox_text <- paste("Pollutant: NOx(GT)", "<br>Month:", format(nox_data$Month_Date, "%b %Y"),
+                  "<br>Average:", round(nox_data$Average_Value, 2))
+
+# CO subplot
+p1 <- plot_ly(
+  data = co_data, x = ~Month_Date, y = ~Average_Value,
+  type = "scatter", mode = "lines+markers",
+  text = co_text, hoverinfo = "text",
+  name = "CO(GT)",                 
+  legendgroup = "CO",             
+  line = list(color = colors_theme$co, width = 3),    
+  marker = list(color = colors_theme$co, size = 6),      
+  showlegend = TRUE               
+)
+
+# NO2 subplot
+p2 <- plot_ly(
+  data = no2_data, x = ~Month_Date, y = ~Average_Value,
+  type = "scatter", mode = "lines+markers",
+  text = no2_text, hoverinfo = "text",
+  name = "NO2(GT)",
+  legendgroup = "NO2",
+  line = list(color = colors_theme$no2, width = 3),    
+  marker = list(color = colors_theme$no2, size = 6),      
+  showlegend = TRUE
+)
+
+# NOx subplot
+p3 <- plot_ly(
+  data = nox_data, x = ~Month_Date, y = ~Average_Value,
+  type = "scatter", mode = "lines+markers",
+  text = nox_text, hoverinfo = "text",
+  name = "NOx(GT)",
+  legendgroup = "NOx",
+  line = list(color = colors_theme$nox, width = 3),     
+  marker = list(color = colors_theme$nox, size = 6),      
+  showlegend = TRUE
+)
+
+# Combine all three plots
+subplot(
+  p1, p2, p3,
+  nrows = 3,
+  shareX = TRUE,
+  titleY = TRUE
+) %>%
+layout(
+  title = list(
+    text = "<b>Monthly Trends of Major Air Pollutants (CO, NO2, NOx)</b>",
+    x = 0.5
+  ),
+  legend = list(
+    orientation = "v",  
+    y = 0.5,             
+    x = 1.05             
+  ),
+  margin = list(r = 100) 
+)
+```
+
+---
+
+## 12. Plot 2: Relationship Between Weather Conditions and NO2
+
+**Why this visualization?**
+
+A scatter plot is the most effective way to identify correlations between continuous variables. By plotting Temperature against Humidity and layering NO₂ levels as a color dimension, we can explore how meteorological conditions collectively influence pollution intensity.
+
+**Insights:**
+
+The plot indicates a negative correlation between temperature and NO₂; as temperatures drop, the concentration of NO₂ increases (visible as a cluster of red points in the lower-temperature range). This suggests that cooler weather may trap pollutants closer to the ground.
+
+**Customization:** 
+
+- Continuous Color Gradient: A "Skyblue-to-Red" colorscale was implemented to intuitively represent the transition from safe to high pollution levels.
+
+- Transparency (Opacity): Setting marker opacity to 0.7 prevents overplotting, allowing the density of the data points to remain visible in crowded areas.
+
+```{r weather_no2_interactive, echo=FALSE, out.width='100%', fig.height=6, fig.cap="**Figure 2.** Relationship between temperature, relative humidity, and NO2 concentration. Points are colored by NO2 levels to highlight how atmospheric conditions may influence pollution intensity."}
+
+# Create hover text for each observation 
+hover_text <- paste(
+  "Temperature:", round(air$Temperature, 1), "°C",
+  "<br>Humidity:", round(air$Relative_Humidity, 1), "%",
+  "<br>NO2:", round(air$NO2_GT, 1)
+)
+
+# Scatter plot showing relationship between temperature and humidity
+# Points are colored based on NO2 concentration
+plot_ly(
+  data = air,
+  x = ~Temperature,
+  y = ~Relative_Humidity,
+  text = hover_text,
+  hoverinfo = "text",
+  type = "scatter",
+  mode = "markers",
+  marker = list(
+    size = 5,
+    opacity = 0.7,
+    color = ~NO2_GT,
+    colorscale = list(c(0, "skyblue"), c(1, "#CC0000")),  # low to high NO2 scale
+    colorbar = list(
+      title = list(text = "NO2", font = list(size = 13)),  # color legend title
+      thickness = 15,
+      len = 0.6
+    ),
+    showscale = TRUE
+  ),
+  showlegend = FALSE
+) %>%
+
+  # Layout settings 
+  layout(
+    title = list(
+      text = "<b>Relationship Between Weather Conditions and NO2 Levels</b>",
+      x = 0.5,
+      font = list(size = 16)
+    ),
+    annotations = list(
+      list(
+        text = "Temperature and humidity pattern colored by NO2 concentration",
+        x = 0.5,
+        y = 1.05,
+        xref = "paper",
+        yref = "paper",
+        showarrow = FALSE,
+        font = list(size = 12)
+      )
+    ),
+
+    # Axis labels and grid styling
+    xaxis = list(title = "Temperature (°C)", showgrid = TRUE, zeroline = FALSE),
+    yaxis = list(title = "Relative Humidity (%)", showgrid = TRUE, zeroline = FALSE),
+
+    # Background styling 
+    paper_bgcolor = "white",
+    plot_bgcolor  = "white",
+
+    # Figure size and margins
+    width  = 800,
+    height = 520,
+    margin = list(t = 100, b = 70, l = 70, r = 30)
+  )
+```
+
+---
+
+## 13. Plot 3: Average NOx Concentration by Hour
+
+**Why this visualization?**
+
+A line chart with an area fill was selected to highlight the "volume" of pollution across a standard 24-hour cycle. This format makes it easy for the viewer to identify "rush hour" patterns and the duration of peak exposure times.
+
+**Insights:**
+
+The data reveals a clear bimodal distribution (two peaks). Significant spikes occur around 8:00 AM and 6:00 PM, aligning with typical morning and evening commuting hours. This strongly suggests that vehicular traffic is a major contributor to NOx emissions.
+
+The dashed reference line represents the overall average NOx concentration, allowing for easy identification of hours with above-average pollution levels. Additionally, the shaded region highlights periods where NOx concentrations exceed a defined threshold, indicating high pollution conditions.
+
+**Customization:** 
+
+- Area Fill: A semi-transparent green fill emphasizes the magnitude and continuity of pollution levels throughout the day.
+
+- Mean Reference Line: A dashed horizontal line was added to represent the average NOx level, providing a baseline for comparison.
+
+- Threshold Highlighting: A shaded red region was introduced to indicate high pollution levels above a specified threshold (200), improving interpretability of critical periods.
+
+- Interactive Hover: Users can hover over the plot to view exact hourly values, enabling precise inspection of peak pollution times.
+
+```{r plot 3, fig.cap="**Figure 3.** Average NOx concentration by hour of the day. The curve shows daily pollution patterns and identifies peak emission periods."}
+# Compute average NOx concentration for each hour of the day
+hourly_nox <- air %>%
+  group_by(Hour) %>%
+  summarise(Avg_NOx = mean(NOx_GT, na.rm = TRUE), .groups = "drop")
+
+# Compute overall mean NOx level across all hours
+mean_nox <- mean(hourly_nox$Avg_NOx, na.rm = TRUE)
+
+# Define pollution threshold for high NOx levels
+threshold <- 200   
+
+# Identify the hour with the highest NOx concentration
+peak <- hourly_nox %>% filter(Avg_NOx == max(Avg_NOx))
+
+# Create main NOx hourly trend plot
+plot_ly(
+  data = hourly_nox,
+  x = ~Hour,
+  y = ~Avg_NOx,
+  type = "scatter",
+  mode = "lines",
+  name = "NOx (Avg)",
+  fill = "tozeroy",
+  fillcolor = paste0(colors_theme$nox, "4D"),
+  line = list(color = colors_theme$nox, width = 3)
+) %>%
+
+  # Add mean NOx reference line
+  add_lines(
+    y = rep(mean_nox, nrow(hourly_nox)),
+    name = "Mean NOx",
+    line = list(dash = "dash", color = "black", width = 2)
+  ) %>%
+
+  # Highlight peak pollution hour
+  add_markers(                                   
+    data = peak,
+    x = ~Hour,
+    y = ~Avg_NOx,
+    marker = list(size = 10, color = "red"),
+    name = "Peak Hour"
+  ) %>%
+
+  # Add threshold reference line 
+  add_trace(
+    data = hourly_nox,
+    x = ~Hour,
+    y = ~rep(threshold, nrow(hourly_nox)),
+    type = "scatter",
+    mode = "lines",
+    name = "High Pollution Threshold (200)",
+    line = list(color = "rgba(255,0,0,0)", width = 1),
+    hoverinfo = "text",
+    text = "Red shaded area = NOx above safe threshold (200)"
+  ) %>%
+
+  # Final layout styling
+  layout(           
+    title = list(
+      text = "<b>Daily NOx Concentration Pattern (Hourly Analysis)</b>",
+      x = 0.5
+    ),
+
+    # Highlight high pollution region visually
+    shapes = list(
+      list(
+        type = "rect",
+        x0 = 0, x1 = 23,
+        y0 = threshold,
+        y1 = max(hourly_nox$Avg_NOx),
+        fillcolor = "rgba(255,0,0,0.12)",
+        line = list(width = 0)
+      )
+    ),
+
+    # Move legend to the right side of the plot
+    legend = list(
+      orientation = "v",
+      x = 1.02,
+      y = 1,
+      xanchor = "left",
+      yanchor = "top"
+    )
+  )
+```
+
+---
+
+## 14. Plot 4: Seasonal Distribution of CO
+
+**Why this visualization?**
+
+A box plot was chosen to analyze how carbon monoxide (CO) concentrations vary across seasons. Unlike mean-based charts, box plots provide a complete statistical summary including median, interquartile range, and outliers, allowing for a more robust understanding of variability and extreme pollution events.
+
+To complement this, seasonal mean values were added as reference markers, enabling a direct comparison between central tendency (mean) and distribution behavior (median and spread).
+
+**Insights:**
+
+The visualization shows that while the median level of CO is relatively consistent across seasons, Winter and Autumn exhibit much higher variability and more frequent extreme outliers. This indicates that pollution events are more unpredictable during these seasons compared to the relatively stable Summer months.
+
+**Customization:** 
+
+- Categorical Coloring: Each season is assigned a distinct color to make the comparison immediate and visually scannable.
+
+- Interactive Outlier Inspection: Plotly allows the user to hover over individual outliers to see the specific CO value, rather than just seeing a generic dot.
+
+- Box Plot Distribution: Captures median, quartiles, and outliers for a complete statistical view of CO levels.
+
+- Seasonal Mean Markers: Black points represent the mean CO concentration for each season, providing a direct comparison against the median.
+
+```{r plot 4, fig.cap="**Figure 4.** Seasonal distribution of CO(GT) levels using box plots. This visualization compares pollution variability across winter, spring, summer, and autumn."}
+
+# Create boxplot to show CO distribution across seasons
+plot_ly(
+  data = air,
+  x = ~Season,
+  y = ~CO_GT,
+  color = ~Season,
+  type = "box",
+  colors = c(
+  "Winter" = "#8DA9C4",  
+  "Spring" = "#A8D5BA",  
+  "Summer" = "#F6C89F",  
+  "Autumn" = "#E6A4A4"   
+  )
+) %>%
+
+  # Add mean CO value per season as black markers
+  add_markers(
+    data = air %>%
+      group_by(Season) %>%
+      summarise(mean_CO = mean(CO_GT, na.rm = TRUE)),
+    x = ~Season,
+    y = ~mean_CO,
+    marker = list(color = "black", size = 8),
+    name = "Mean",
+    showlegend = TRUE,
+    inherit = FALSE
+  ) %>%
+  layout(
+    title = list(
+      text = "<b>Seasonal Variation of CO Concentrations</b>",
+      x = 0.5
+    )
+  )
+```
+
+---
+
+## 15. Plot 5: Pollutant Variability
+
+**Why this visualization?**
+
+A violin plot was selected because it combines a box plot with a kernel density estimation. This allows us to see not just the range of the pollutants (CO, NOx, NO₂), but also where the "bulk" of the data points are clustered.
+
+**Insights:**
+
+The violin plots highlight a massive disparity in variability. While CO and NO₂ have relatively narrow "necks," NOx shows a very wide spread with a long upward tail. This indicates that NOx is highly volatile and prone to extreme concentration spikes that far exceed the typical range of other pollutants.
+
+**Customization:** 
+
+- Embedded Box Plots: Including the box plot inside the violin provides the best of both worlds: the precise quartiles of the box plot and the distributional shape of the violin.
+
+- Coordinated Palette: Reusing the Green/Blue/Red palette ensures the reader can immediately identify which pollutant is which without constantly checking the legend.
+
+```{r plot 5, fig.cap="**Figure 5.** Distribution of CO(GT), NOx(GT), and NO2(GT) using violin plots. This highlights variability, density, and spread of pollutant concentrations."}
+
+# Create the object inside the chunk
+pollutant_long <- air %>%
+  select(CO_GT, NOx_GT, NO2_GT) %>%
+  pivot_longer(
+    everything(),
+    names_to  = "Pollutant",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    Pollutant = dplyr::recode(
+      Pollutant,
+      "CO_GT"  = "CO(GT)",
+      "NOx_GT" = "NOx(GT)",
+      "NO2_GT" = "NO2(GT)"
+    )
+  )
+
+# Filter for subplots
+co_dist  <- pollutant_long %>% filter(Pollutant == "CO(GT)")
+no2_dist <- pollutant_long %>% filter(Pollutant == "NO2(GT)")
+nox_dist <- pollutant_long %>% filter(Pollutant == "NOx(GT)")
+
+# Create individual plots
+p_co <- plot_ly(data = co_dist, x = ~Pollutant, y = ~Value, type = "violin",
+                name = "CO(GT)", marker = list(color = colors_theme$co),
+                line = list(color = colors_theme$co), fillcolor = colors_theme$co)
+
+p_no2 <- plot_ly(data = no2_dist, x = ~Pollutant, y = ~Value, type = "violin",
+                 name = "NO2(GT)", marker = list(color = colors_theme$no2),
+                 line = list(color = colors_theme$no2), fillcolor = colors_theme$no2)
+
+p_nox <- plot_ly(data = nox_dist, x = ~Pollutant, y = ~Value, type = "violin",
+                 name = "NOx(GT)", marker = list(color = colors_theme$nox),
+                 line = list(color = colors_theme$nox), fillcolor = colors_theme$nox)
+
+# Generate Subplot
+subplot(p_co, p_no2, p_nox, nrows = 1, shareY = FALSE, margin = 0.05) %>%
+  layout(
+    title = list(text = "<b>Distribution of Major Air Pollutants</b>", x = 0.5),
+    showlegend = FALSE
+  )
+
+```
+
+---
+
+## 16. Written Summary
+
+This phase focused on transforming the cleaned Air Quality dataset into meaningful visualizations to understand environmental pollution patterns. A range of techniques was applied: line and area charts for temporal trends, scatter plots for weather-pollutant relationships, and box and violin plots to analyze seasonal distributions and variance. Each visualization was designed with consistent color themes and interactive Plotly features to maximize readability and user engagement.
+
+The analysis revealed distinct, actionable patterns. Temporally, NOx concentrations display clear bimodal daily peaks around 8:00 AM and 6:00 PM, strongly suggesting traffic-related emissions during rush hours. Furthermore, the scatter plot analysis indicates a negative correlation between temperature and NO₂, with the highest concentrations clustering in cooler conditions. Finally, the distribution plots highlighted stark differences in pollutant behavior; while CO remains relatively stable, NOx exhibits massive variability and extreme outliers.
+
+Overall, these visualizations proved highly effective in translating complex environmental data into interpretable insights. The choice of violin plots, for instance, successfully exposed density patterns that standard charts would obscure. The consistent styling and interactivity ultimately enhanced the analytical depth, proving visualization to be a powerful tool for uncovering and communicating critical environmental trends.
+
+## ───────────────────────
+
+# Phase 3: Advanced Statistical Analysis, Hypothesis Testing, and Predictive Modeling
+
+This phase builds upon the initial research questions defined in Phase 1 by applying statistical analysis and modeling techniques to better understand air pollution patterns and their potential drivers.
+
+The study is guided by the following research questions:
+
+- How do air pollutant concentrations (CO, NOx, and NO₂) vary over time?
+- Is there a relationship between meteorological variables (temperature, humidity) and air pollution levels?
+- Are there daily or seasonal patterns in air quality measurements?
+- Which pollutants show the highest variability throughout the monitoring period?
+- Can environmental conditions help explain changes in pollution levels?
+
+To address these broad questions, the following specific analytical questions are defined:
+
+- **RQ1:** Do air pollution levels (CO, NO₂, NOx) significantly differ across seasons?
+- **RQ2:** Is there a statistically significant relationship between temperature and NO₂ concentration?
+- **RQ3:** Do rush hours significantly increase NOx levels compared to non-rush hours?
+- **RQ4:** Are CO concentrations higher in Winter compared to Summer?
+- **RQ5:** Can air pollution levels be predicted using meteorological and temporal variables?
+
+The following sections present descriptive statistics, visualizations, hypothesis testing, and predictive modeling to systematically answer these questions.
+
+---
+
+## 17. Descriptive Statistics
+
+This section presents descriptive statistics for the main air pollutants and meteorological variables. The aim is to summarize the central tendency, spread, and variability of the variables before moving to formal hypothesis testing and regression modeling.
+
+This section directly supports the original research questions by helping identify which pollutants vary the most, whether meteorological variables are related to pollution levels, and whether the data show patterns that require further statistical testing.
+
+---
+
+### 17.1 Correlation Analysis
+
+Before presenting the descriptive statistics table, a correlation heatmap is used to examine the relationships between the main pollutants and meteorological variables. This supports the research question asking whether meteorological variables such as temperature and humidity are related to air pollution levels.
+
+```{r corr_heatmap, fig.width=11, fig.height=9, fig.cap="**Figure 6.** Pearson correlation matrix of all numeric variables, hierarchically clustered."}
+
+num_vars <- air %>%
+  select(
+    CO_GT, NOx_GT, NO2_GT, C6H6_GT,
+    PT08_S1_CO, PT08_S2_NMHC, PT08_S3_NOx,
+    PT08_S4_NO2, PT08_S5_O3,
+    Temperature, Relative_Humidity, Absolute_Humidity
+  ) %>%
+  rename(
+    `CO(GT)`    = CO_GT,
+    `NOx(GT)`   = NOx_GT,
+    `NO2(GT)`   = NO2_GT,
+    `C6H6(GT)`  = C6H6_GT,
+    `PT08-CO`   = PT08_S1_CO,
+    `PT08-NMHC` = PT08_S2_NMHC,
+    `PT08-NOx`  = PT08_S3_NOx,
+    `PT08-NO2`  = PT08_S4_NO2,
+    `PT08-O3`   = PT08_S5_O3,
+    `Temp (°C)` = Temperature,
+    `Rel.Hum %` = Relative_Humidity,
+    `Abs.Hum`   = Absolute_Humidity
+  )
+
+corr_mat <- cor(num_vars, use = "complete.obs")
+
+theme_air <- function(base_size = 11) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      plot.background = element_rect(fill = "white", color = NA),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(color = "gray90"),
+      plot.title = element_text(face = "bold"),
+      text = element_text(family = "sans")
+    )
+}
+
+ggcorrplot(
+  corr_mat,
+  method = "square",
+  type = "full",
+  hc.order = TRUE,
+  lab = TRUE,
+  lab_size = 3,
+  colors = c("#E63946", "white", "#457B9D"),
+  outline.col = "white",
+  ggtheme = theme_air(),
+  title = "Correlation Matrix of Air Quality Variables"
+) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+    axis.text.y = element_text(size = 9),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)
+  )
+```
+The correlation heatmap shows the initial relationships between pollutants and environmental variables. It helps answer whether meteorological conditions are associated with pollution levels. These relationships will later be tested more formally using correlation testing and regression modeling.
+
+---
+
+### 17.2 Temporal Patterns Analysis
+
+This heatmap shows how NOx concentrations vary across hours of the day and days of the week. Higher values appear during morning and evening hours, suggesting possible daily patterns in pollution levels.
+
+These observed patterns directly motivate Hypothesis 3, where the difference between rush and non-rush periods is formally tested.
+
+```{r heatmap_nox, fig.height=5, fig.cap="**Figure 7.** NOx concentration heat map by hour and weekday."}
+
+heatmap_data <- air %>%
+  mutate(
+    DayOfWeek = wday(DateTime, label = TRUE, abbr = TRUE,
+                     week_start = 1),      # Mon = 1
+    Weekend   = if_else(wday(DateTime, week_start = 1) >= 6,
+                        "Weekend", "Weekday")
+  ) %>%
+  group_by(DayOfWeek, Hour) %>%
+  summarise(Avg_NOx = mean(NOx_GT, na.rm = TRUE), .groups = "drop")
+
+ggplot(heatmap_data, aes(x = Hour, y = DayOfWeek, fill = Avg_NOx)) +
+  geom_tile(colour = "white", linewidth = 0.4) +
+  geom_text(aes(label = round(Avg_NOx, 0)), size = 2.8, colour = "white",
+            fontface = "bold") +
+  scale_fill_viridis_c(option = "magma", direction = -1,
+                       name = "Avg NOx\n(µg/m³)") +
+  scale_x_continuous(breaks = 0:23, expand = c(0, 0)) +
+  scale_y_discrete(limits = rev) +
+  labs(title    = "NOx Concentration Heat Map: Hour of Day × Day of Week",
+       subtitle = "Darker tiles = higher pollution | Rush-hour patterns visible Mon–Fri",
+       x        = "Hour of Day",
+       y        = NULL) +
+  theme_air() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(size = 8))
+```
+
+---
+
+### 17.3 Descriptive Statistics Table
+
+The following table summarizes the main pollutants and meteorological variables using measures of center and spread. This is important for answering the research question about which pollutants show the highest variability throughout the monitoring period.
+
+```{r desc_stats_table}
+target_vars <- c(
+  "CO_GT", "NO2_GT", "NOx_GT", "C6H6_GT",
+  "Temperature", "Relative_Humidity", "Absolute_Humidity"
+)
+
+mode_val <- function(x) {
+  x <- x[!is.na(x)]
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+desc_stats <- map_dfr(target_vars, function(v) {
+  x <- air[[v]]
+  tibble(
+    Variable          = v,
+    N                 = sum(!is.na(x)),
+    Mean              = round(mean(x,   na.rm = TRUE), 3),
+    Median            = round(median(x, na.rm = TRUE), 3),
+    Mode              = round(mode_val(x), 3),
+    Std_Dev           = round(sd(x,     na.rm = TRUE), 3),
+    Variance          = round(var(x,    na.rm = TRUE), 3),
+    Min               = round(min(x,    na.rm = TRUE), 3),
+    Q1                = round(quantile(x, 0.25, na.rm = TRUE), 3),
+    Q3                = round(quantile(x, 0.75, na.rm = TRUE), 3),
+    Max               = round(max(x,    na.rm = TRUE), 3),
+    IQR               = round(IQR(x,    na.rm = TRUE), 3),
+    Skewness          = round(
+      (mean(x, na.rm = TRUE) - median(x, na.rm = TRUE)) /
+        sd(x, na.rm = TRUE), 3),
+    CV_pct            = round(
+      (sd(x, na.rm = TRUE) / mean(x, na.rm = TRUE)) * 100, 1)
+  )
+})
+
+desc_stats %>%
+  mutate(Variable = dplyr::recode(Variable,
+    CO_GT              = "CO (mg/m³)",
+    NO2_GT             = "NO₂ (µg/m³)",
+    NOx_GT             = "NOx (µg/m³)",
+    C6H6_GT            = "Benzene C₆H₆ (µg/m³)",
+    Temperature        = "Temperature (°C)",
+    Relative_Humidity  = "Relative Humidity (%)",
+    Absolute_Humidity  = "Absolute Humidity")) %>%
+  kable(caption   = "Table 1. Comprehensive Descriptive Statistics for Key Variables",
+        col.names = c("Variable", "N", "Mean", "Median","Mode",
+                      "Std Dev", "Variance", "Min", "Q1", "Q3", "Max",
+                      "IQR", "Skewness", "CV (%)"),
+        align = "lrrrrrrrrrrrrr") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                full_width = FALSE, font_size = 12) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white") %>%
+  column_spec(1, bold = TRUE) %>%
+  footnote(general = "CV = Coefficient of Variation (%). Skewness computed as (mean − median) / SD (Pearson's second).",
+           general_title = "Note: ")
+```
+The descriptive statistics show that variability differs across pollutants. Standard deviation, variance, IQR, and coefficient of variation are especially useful for identifying which pollutant fluctuates the most across the monitoring period.
+
+---
+
+### 17.4 Variability Ranking of Pollutants
+
+To directly answer the research question about which pollutant shows the highest variability, the pollutants are ranked using their coefficient of variation. This allows comparison even though the pollutants are measured on different scales.
+
+```{r variability_table}
+
+variability_table <- desc_stats %>%
+  filter(Variable %in% c("CO_GT", "NO2_GT", "NOx_GT")) %>%
+  mutate(
+    Variable = dplyr::recode(
+      Variable,
+      CO_GT = "CO",
+      NO2_GT = "NO₂",
+      NOx_GT = "NOx"
+    )
+  ) %>%
+  arrange(desc(CV_pct)) %>%
+  select(Variable, Std_Dev, Variance, IQR, CV_pct)
+
+variability_table %>%
+  kable(
+    caption = "Table 2. Variability Ranking of Main Pollutants",
+    col.names = c("Pollutant", "Std Dev", "Variance", "IQR", "CV (%)"),
+    align = "lrrrr"
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 12
+  ) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white") %>%
+  column_spec(1, bold = TRUE)
+ 
+```
+This table directly answers the research question about pollutant variability. The pollutant with the highest coefficient of variation is considered the most variable relative to its average level.
+
+---
+
+### 17.5 Frequency Table: Season
+
+The season frequency table summarizes how observations are distributed across seasons. This is important before testing whether pollution levels differ significantly across seasonal groups.
+```{r }
+season_freq <- air %>%
+  count(Season) %>%
+  mutate(
+    Proportion = round(n / sum(n) * 100, 2),
+    `Cumulative %` = cumsum(Proportion)
+  )
+
+season_freq %>%
+  kable(
+    caption = "Table 3. Frequency Table for Season",
+    col.names = c("Season", "Count", "Proportion (%)", "Cumulative (%)")
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 12
+  ) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white")
+
+```
+The seasonal frequency table supports the seasonal research question by confirming that the dataset contains observations across the four seasons. This prepares the analysis for the seasonal hypothesis tests in the next section.
+
+---
+
+### 17.6 Frequency Table: Hour Category / Traffic Periods
+
+The following table groups observations into traffic-related time periods. This prepares the dataset for the rush-hour analysis, where NOx concentrations will be compared between rush and non-rush hours.
+```{r freq_table}
+period_freq <- air %>%
+  mutate(
+    Period = case_when(
+      Hour %in% 0:5 ~ "Night (00–05)",
+      Hour %in% 6:9 ~ "Morning Rush (06–09)",
+      Hour %in% 10:16 ~ "Midday (10–16)",
+      Hour %in% 17:20 ~ "Evening Rush (17–20)",
+      TRUE ~ "Late Evening (21–23)"
+    ),
+    Period = factor(
+      Period,
+      levels = c(
+        "Night (00–05)",
+        "Morning Rush (06–09)",
+        "Midday (10–16)",
+        "Evening Rush (17–20)",
+        "Late Evening (21–23)"
+      )
+    )
+  ) %>%
+  count(Period) %>%
+  mutate(
+    Proportion = round(n / sum(n) * 100, 2),
+    `Cumulative %` = cumsum(Proportion)
+  )
+
+period_freq %>%
+  kable(
+    caption = "Table 4. Frequency Table for Hour-of-Day Traffic Period",
+    col.names = c("Period", "Count", "Proportion (%)", "Cumulative (%)")
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 12
+  ) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white")
+
+```
+This table supports the daily pattern research question by organizing the data into meaningful traffic periods. These categories will be used later to examine whether NOx levels are higher during rush hours.
+
+---
+
+### 17.7 Descriptive Statistics Commentary
+
+The descriptive statistics provide an initial quantitative overview of the dataset before formal testing. The pollutants show different levels of spread, meaning that some pollutants fluctuate more strongly than others during the monitoring period.
+
+The variability ranking directly addresses the research question asking which pollutant shows the highest variability. By comparing the coefficient of variation, the analysis identifies the pollutant with the greatest relative fluctuation rather than relying only on raw standard deviation.
+
+The correlation heatmap supports the research question about meteorological influences by showing the initial relationships between temperature, humidity, and pollution levels. These relationships are explored more formally in the hypothesis testing and regression sections.
+
+The seasonal and traffic-period frequency tables prepare the dataset for later analysis of seasonal and daily patterns. Together, these descriptive results show that the dataset is appropriate for testing whether pollution differs by season, whether rush hours affect NOx, and whether environmental conditions help explain changes in pollution levels.
+
+---
+
+## 18. Hypothesis Testing
+
+This section presents a series of formal statistical tests designed to evaluate key research hypotheses derived from the exploratory analysis. Each test targets a specific scientific question related to pollution behavior, seasonal variation, meteorological influence, or human activity patterns.
+
+For each hypothesis, we report the appropriate test statistic, p-value, and where relevant, effect sizes and confidence intervals. Interpretations are provided in a practical context to connect statistical significance with real-world environmental implications.
+
+Before performing hypothesis tests, key statistical assumptions were evaluated:
+
+- Normality was assessed visually using histograms and Q-Q plots.
+- Variance homogeneity was considered for ANOVA (robust due to large sample size).
+- Independence is satisfied as observations are time-stamped measurements.
+- For skewed variables (e.g., CO), non-parametric tests were used when appropriate.
+
+These checks ensure the validity of the statistical inference performed in this section.
+
+---
+
+### 18.1 Hypothesis 1 (RQ1): Do pollution levels differ across seasons?  
+*(One-Way ANOVA + Tukey HSD on CO as representative pollutant)*
+
+To operationalize this question, CO is used as a representative pollutant to test whether seasonal differences exist.
+
+**H₀:** The mean CO concentration is equal across all four seasons.  
+**H₁:** At least one season has a significantly different mean CO concentration.
+
+**Rationale:** ANOVA is appropriate for comparing means across more than two independent
+groups (seasons). Tukey's HSD post-hoc test identifies which specific pairs of seasons differ.
+
+**Assumptions:**
+- Observations are independent
+- CO values are approximately normally distributed within each group (supported by sample size and CLT)
+- Homogeneity of variance assumed across seasons
+
+```{r h1_anova}
+anova_model <- aov(CO_GT ~ Season, data = air)
+anova_tidy  <- tidy(anova_model)
+
+anova_tidy %>%
+  kable(caption   = "Table 5. One-Way ANOVA — CO(GT) ~ Season",
+        col.names = c("Term", "df", "SS", "MS", "F-statistic", "p-value"),
+        digits    = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, font_size = 12) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white") %>%
+  row_spec(1, bold = TRUE, color = if (anova_tidy$p.value[1] < 0.05) "#CC0000" else "black")
+```
+
+```{r h1_posthoc}
+tukey_res <- TukeyHSD(anova_model)
+tukey_df  <- as.data.frame(tukey_res$Season) %>%
+  rownames_to_column("Comparison") %>%
+  rename(Diff = diff, Lower = lwr, Upper = upr, p_adj = `p adj`) %>%
+  mutate(Significant = if_else(p_adj < 0.05, "Yes ✓", "No"))
+
+tukey_df %>%
+  kable(caption   = "Table 6. Tukey HSD Post-Hoc — Pairwise CO(GT) Comparisons",
+        col.names = c("Comparison", "Mean Diff", "95% CI Lower", "95% CI Upper",
+                      "Adjusted p-value", "Significant (α = 0.05)"),
+        digits    = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, font_size = 12) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white")
+```
+
+<div class="insight-box">
+
+**Result:** The ANOVA yields F = `r round(anova_tidy$statistic[1], 2)`,
+p < 0.001. We **reject H₀** — CO concentrations differ significantly across seasons.
+Tukey HSD reveals that Summer is significantly different from Winter and Autumn,
+with Summer having the lowest mean CO. Winter–Autumn and Winter–Spring pairs are
+not significantly different, suggesting that cold-season pollution behaviour is
+relatively homogeneous.
+
+This indicates that seasonal variation has a statistically significant effect on CO levels. Higher concentrations during colder seasons are likely driven by increased heating-related emissions, reduced atmospheric mixing, and weaker dispersion conditions, while lower summer values reflect stronger vertical mixing and photochemical activity that help reduce pollutant accumulation.
+</div>
+
+---
+
+### 18.2 Hypothesis 2 (RQ2): Is temperature negatively correlated with NO₂?
+*(Pearson Correlation Test)*
+
+**H₀:** ρ(Temperature, NO₂) = 0 (no linear relationship)  
+**H₁:** ρ(Temperature, NO₂) < 0 (negative correlation)
+
+**Assumptions:**
+- Linear relationship between variables
+- Continuous numeric variables
+- No extreme outliers dominating the relationship
+
+```{r h2_corr}
+corr_test <- cor.test(air$Temperature, air$NO2_GT,
+                      method      = "pearson",
+                      alternative = "less")
+
+tibble(
+  Statistic   = round(corr_test$statistic, 4),
+  df          = corr_test$parameter,
+  r           = round(corr_test$estimate, 4),
+  `95% CI Lower` = round(corr_test$conf.int[1], 4),
+  `95% CI Upper` = round(corr_test$conf.int[2], 4),
+  `p-value`   = format.pval(corr_test$p.value, digits = 4)
+) %>%
+  kable(caption = "Table 7. Pearson Correlation Test — Temperature vs. NO₂") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, font_size = 12) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white")
+```
+
+```{r h2_viz, fig.height=5, fig.cap="**Figure 8.** Temperature vs. NO2 with linear regression fit and marginal annotations."}
+
+season_pal <- c(
+  "Winter" = "#8DA9C4",  # soft blue
+  "Spring" = "#A8D5BA",  # soft green
+  "Summer" = "#F6C89F",  # soft peach
+  "Autumn" = "#E6A4A4"   # soft rose
+)
+
+set.seed(42)
+sample_air <- air %>% slice_sample(n = 3000)
+
+ggplot(sample_air, aes(x = Temperature, y = NO2_GT)) +
+  geom_point(aes(colour = Season), alpha = 0.35, size = 1.5) +
+  geom_smooth(method = "lm", colour = "#E63946", fill = "#E63946",
+              alpha = 0.2, linewidth = 1.5) +
+  scale_colour_manual(values = season_pal) +
+  annotate("text", x = 35, y = 300,
+           label = paste0("r = ", round(corr_test$estimate, 3),
+                          "\np < 0.001"),
+           size = 4.5, colour = "#2C3E50", fontface = "bold") +
+  labs(title    = "Temperature vs. NO₂ Concentration",
+       subtitle = "Negative Pearson correlation | Points coloured by season (n = 3 000 sample)",
+       x        = "Temperature (°C)",
+       y        = "NO₂ Concentration (µg/m³)",
+       colour   = "Season") +
+  theme_air()
+```
+
+<div class="insight-box">
+
+**Result:** r = `r round(corr_test$estimate, 3)`, p < 0.001. We **reject H₀**.
+There is a statistically significant negative correlation between temperature and NO₂. This means that higher temperatures are generally associated with lower NO₂ concentrations.
+
+This supports the idea that colder conditions may reduce atmospheric dispersion and allow NO₂ to accumulate near the ground. This finding is consistent with the correlation heatmap in Section 17.1, where temperature showed a negative association with NO₂.
+</div>
+
+---
+
+### 18.3 Hypothesis 3 (RQ3): Is NOx significantly higher during rush hours? 
+*(Welch Two-Sample t-Test)*
+
+This hypothesis formally tests the temporal pattern observed in Section 17.2, where higher NOx concentrations were visible during specific hours of the day.
+
+**H₀:** The mean NOx concentration during rush hours is equal to that during non-rush hours.  
+**H₁:** The mean NOx concentration during rush hours is greater than that during non-rush hours. 
+
+Rush hours are defined as 06–09 and 17–20 inclusive.
+
+**Assumptions:**
+- Independent samples (rush vs non-rush periods)
+- Large sample size allows robustness to normality violations
+- Unequal variances handled using Welch’s t-test
+
+```{r h3_ttest}
+air_rush <- air %>%
+  mutate(Is_Rush = Hour %in% c(6, 7, 8, 9, 17, 18, 19, 20))
+
+rush_nox     <- air_rush %>% filter(Is_Rush) %>% pull(NOx_GT)
+non_rush_nox <- air_rush %>% filter(!Is_Rush) %>% pull(NOx_GT)
+
+t_test <- t.test(rush_nox, non_rush_nox,
+                 alternative = "greater", var.equal = FALSE)
+
+# Effect size: Cohen's d
+pooled_sd <- sqrt((var(rush_nox) + var(non_rush_nox)) / 2)
+cohen_d   <- (mean(rush_nox) - mean(non_rush_nox)) / pooled_sd
+
+result_table <- tibble(
+  Metric = c(
+    "Rush Mean NOx",
+    "Non-Rush Mean NOx",
+    "Mean Difference",
+    "t-statistic",
+    "df",
+    "p-value",
+    "Cohen's d",
+    "Effect Size"
+  ),
+  Value = c(
+    mean(rush_nox),
+    mean(non_rush_nox),
+    mean(rush_nox) - mean(non_rush_nox),
+    unname(t_test$statistic),
+    unname(t_test$parameter),
+    t_test$p.value,
+    cohen_d,
+    case_when(
+      abs(cohen_d) < 0.2 ~ "Negligible",
+      abs(cohen_d) < 0.5 ~ "Small",
+      abs(cohen_d) < 0.8 ~ "Medium",
+      TRUE ~ "Large"
+    )
+  )
+)
+
+result_table %>%
+  mutate(Value = as.character(Value)) %>%
+  
+  kable(caption = "Table 8. Welch t-Test — Rush Hour vs. Non-Rush Hour NOx") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, font_size = 12) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white")
+```
+
+<div class="insight-box">
+
+**Result:** Rush-hour mean NOx (`r round(mean(rush_nox), 1)` µg/m³) significantly
+exceeds non-rush-hour mean (`r round(mean(non_rush_nox), 1)` µg/m³).
+The Welch t-test gives t = `r round(t_test$statistic, 2)`, p < 0.001.
+Cohen's d = `r round(cohen_d, 2)` indicates a **medium-to-large practical effect**.
+We **reject H₀**: NOx concentrations are significantly higher during rush hours, suggesting that traffic-related activity contributes to increased pollution levels.
+
+This finding confirms that NOx levels are significantly higher during rush hours, supporting the impact of traffic-related emissions.
+</div>
+
+---
+
+### 18.4 Hypothesis 4 (RQ4): Is CO higher in Winter than Summer?
+*(Wilcoxon Rank-Sum Test)*
+
+This hypothesis further investigates the seasonal differences observed in Section 17, where CO levels showed variation across seasons.
+
+**H₀:** The distribution of CO concentrations in Winter is equal to that in Summer.  
+**H₁:** CO concentrations in Winter are greater than those in Summer.
+
+**Rationale**: CO is right-skewed (see Section 17), so the non-parametric Wilcoxon
+rank-sum test is more appropriate than a parametric t-test.*
+
+**Assumptions:**
+- Independent samples
+- Non-parametric test used due to skewed distribution of CO
+
+```{r h4_wilcox}
+winter_co <- air %>% filter(Season == "Winter") %>% pull(CO_GT)
+summer_co <- air %>% filter(Season == "Summer") %>% pull(CO_GT)
+
+wilcox_res <- wilcox.test(winter_co, summer_co, alternative = "greater",
+                          conf.int = TRUE)
+
+# Rank-biserial correlation as effect size
+n1 <- length(winter_co); n2 <- length(summer_co)
+r_rb <- 1 - (2 * wilcox_res$statistic) / (n1 * n2)
+
+tibble(
+  `Winter Median CO` = round(median(winter_co), 3),
+  `Summer Median CO` = round(median(summer_co), 3),
+  `W-statistic`      = as.numeric(wilcox_res$statistic),
+  `p-value`          = format.pval(wilcox_res$p.value, digits = 4),
+  `Rank-Biserial r`  = round(r_rb, 3),
+  `Effect Size`      = case_when(
+    abs(r_rb) < 0.1 ~ "Negligible",
+    abs(r_rb) < 0.3 ~ "Small",
+    abs(r_rb) < 0.5 ~ "Medium",
+    TRUE ~ "Large"
+  )
+) %>%
+  mutate(across(everything(), as.character)) %>%  
+  pivot_longer(everything(), names_to = "Metric", values_to = "Value") %>%
+  kable(caption = "Table 9. Wilcoxon Rank-Sum Test — Winter vs. Summer CO") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, font_size = 12) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white")
+```
+
+<div class="insight-box">
+
+**Result:** Winter median CO (`r round(median(winter_co), 2)` mg/m³) significantly
+exceeds Summer median (`r round(median(summer_co), 2)` mg/m³).
+W = `r as.numeric(wilcox_res$statistic)`, p < 0.001.
+Rank-biserial r = `r round(r_rb, 2)` — a **large effect size**.
+We **reject H₀**: CO concentrations are significantly higher in Winter than in Summer. This suggests that seasonal factors, such as increased combustion activities and atmospheric conditions, may contribute to higher pollution levels during colder months.
+
+This finding is consistent with patterns observed in the exploratory analysis in Section 17. It shows that CO concentrations are significantly higher in Winter compared to Summer. This seasonal difference is largely explained by increased combustion for heating purposes during colder months, combined with temperature inversion events that trap pollutants near the ground. In Summer, stronger atmospheric mixing and higher photochemical activity contribute to more effective pollutant dispersion and lower CO levels.
+</div>
+
+---
+
+## 19. Linear Regression
+
+This section develops a structured regression framework to model and predict air pollution dynamics. Two complementary models are implemented: a simple linear regression to establish baseline relationships, and a multiple linear regression incorporating meteorological and temporal factors.
+
+Each model is evaluated using statistical significance tests, goodness-of-fit measures, and diagnostic checks. In addition, residual analysis and prediction exercises are used to assess model validity, interpretability, and real-world predictive performance in the context of environmental behavior.
+
+---
+
+### 19.1 Model 1: Simple Linear Regression: CO ~ Temperature
+
+```{r lm1_fit}
+lm1 <- lm(CO_GT ~ Temperature, data = air)
+lm1_tidy <- tidy(lm1, conf.int = TRUE)
+lm1_glance <- glance(lm1)
+
+lm1_tidy %>%
+  select(term, estimate, std.error, statistic, p.value, conf.low, conf.high) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4))) %>%
+  kable(caption   = "Table 10. Model 1 Coefficients — CO ~ Temperature",
+        col.names = c("Term", "Estimate", "Std Error", "t", "p-value",
+                      "95% CI Low", "95% CI High")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, font_size = 12) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white")
+```
+
+```{r lm1_metrics}
+tibble(
+  `R²`            = round(lm1_glance$r.squared, 4),
+  `Adj. R²`       = round(lm1_glance$adj.r.squared, 4),
+  `F-statistic`   = round(lm1_glance$statistic, 2),
+  `Model p-value` = format.pval(lm1_glance$p.value, digits = 4),
+  RMSE            = round(lm1_glance$sigma, 4),
+  AIC             = round(lm1_glance$AIC, 1)
+) %>%
+  mutate(across(everything(), as.character)) %>%
+  pivot_longer(everything(), names_to = "Metric", values_to = "Value") %>%
+  kable(caption = "Table 11. Model 1 Fit Statistics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, font_size = 12) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white")
+```
+
+```{r lm1_viz, fig.height=5, fig.cap="**Figure 9.** Model 1 — CO predicted by Temperature with 95% prediction interval."}
+
+pred1 <- tibble(Temperature = seq(min(air$Temperature, na.rm = TRUE),
+                                   max(air$Temperature, na.rm = TRUE),
+                                   length.out = 200))
+pred1 <- bind_cols(pred1,
+                   as_tibble(predict(lm1, newdata = pred1,
+                                     interval = "prediction"))) %>%
+  rename(fit_co = fit, lwr = lwr, upr = upr)
+
+ggplot() +
+  geom_point(data = slice_sample(air, n = 3000),
+             aes(x = Temperature, y = CO_GT, colour = Season),
+             alpha = 0.25, size = 1.2) +
+  geom_ribbon(data = pred1, aes(x = Temperature, ymin = lwr, ymax = upr),
+              fill = "#E63946", alpha = 0.15) +
+  geom_line(data = pred1, aes(x = Temperature, y = fit_co),
+            colour = "#E63946", linewidth = 1.6) +
+  scale_colour_manual(values = season_pal) +
+  annotate("text", x = 25, y = 9,
+           label = paste0("CO = ", round(coef(lm1)[1], 2),
+                          " + (", round(coef(lm1)[2], 3), " × Temp)\n",
+                          "R² = ", round(lm1_glance$r.squared, 3)),
+           colour = "#2C3E50", size = 4, fontface = "bold", hjust = 0) +
+  coord_cartesian(ylim = c(0, 12)) +
+  labs(title    = "Model 1: CO ~ Temperature",
+       subtitle = "Red line = fitted values | Shaded band = 95% prediction interval",
+       x        = "Temperature (°C)",
+       y        = "CO Concentration (mg/m³)",
+       colour   = "Season") +
+  theme_air()
+```
+
+---
+
+### 19.2 Model 2: Multiple Linear Regression: CO ~ Temperature + Relative Humidity + Hour + Season
+
+```{r lm2_fit}
+lm2 <- lm(CO_GT ~ Temperature + Relative_Humidity + Hour + Season,
+           data = air)
+lm2_tidy   <- tidy(lm2, conf.int = TRUE)
+lm2_glance <- glance(lm2)
+
+lm2_tidy %>%
+  select(term, estimate, std.error, statistic, p.value, conf.low, conf.high) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)),
+         Significant = if_else(p.value < 0.05, "✓", "")) %>%
+  kable(caption   = "Table 12. Model 2 Coefficients — Multiple Regression",
+        col.names = c("Term", "Estimate", "Std Error", "t", "p-value",
+                      "95% CI Low", "95% CI High", "Sig.")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, font_size = 12) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white")
+```
+
+```{r lm2_metrics}
+tibble(
+  Model           = c("Model 1: CO ~ Temp", "Model 2: CO ~ Temp + Hum + Hour + Season"),
+  `R²`            = round(c(lm1_glance$r.squared,   lm2_glance$r.squared),   4),
+  `Adj. R²`       = round(c(lm1_glance$adj.r.squared, lm2_glance$adj.r.squared), 4),
+  RMSE            = round(c(lm1_glance$sigma, lm2_glance$sigma), 4),
+  AIC             = round(c(lm1_glance$AIC,   lm2_glance$AIC),   1)
+) %>%
+  kable(caption = "Table 13. Model Comparison: Model 1 vs. Model 2") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE, font_size = 12) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white") %>%
+  row_spec(2, bold = TRUE)
+```
+
+```{r lm2_coef_plot, fig.height=6,fig.cap="**Figure 10.** Model 2 — coefficient plot with 95% confidence intervals."}
+
+lm2_tidy %>%
+  filter(term != "(Intercept)") %>%
+  mutate(term = dplyr::recode(term,
+    Temperature        = "Temperature (°C)",
+    Relative_Humidity  = "Relative Humidity (%)",
+    Hour               = "Hour of Day",
+    SeasonSpring       = "Season: Spring",
+    SeasonSummer       = "Season: Summer",
+    SeasonAutumn       = "Season: Autumn"),
+    Positive = estimate > 0) %>%
+  ggplot(aes(x = estimate, y = forcats::fct_reorder(term, estimate),
+             colour = Positive)) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "#888888") +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high),
+                 height = 0.3, linewidth = 0.9) +
+  geom_point(size = 4) +
+  scale_colour_manual(values = c(`TRUE` = "#2A9D8F", `FALSE` = "#E63946"),
+                      guide = "none") +
+  labs(title    = "Model 2 — Regression Coefficient Plot",
+       subtitle = "Error bars = 95% CI | Green = positive effect, Red = negative effect",
+       x        = "Estimated Effect on CO (mg/m³)",
+       y        = NULL) +
+  theme_air()
+```
+
+**Model Comparison Interpretation:**
+
+Model 2 shows a clear improvement over Model 1, demonstrated by higher R² and Adjusted R² values, as well as lower RMSE and AIC. 
+
+This confirms that adding humidity, hour of day, and seasonal effects improves the explanatory power of the model and better captures real-world variations in CO concentration.
+
+```{r multicollinearity_check}
+vif(lm2)
+```
+
+**Multicollinearity Check:**
+
+Variance Inflation Factor (VIF) values were computed for Model 2 to assess multicollinearity among predictors. All VIF values were below 5, indicating no severe multicollinearity and confirming that the model coefficients are stable and interpretable.
+
+
+
+**Summary of Regression Models:**
+
+| Model | Purpose | Key Finding | Performance |
+|------|--------|------------|------------|
+| Model 1 | CO vs Temperature | Weak negative relationship | Low R² |
+| Model 2 | CO with meteorological + temporal variables | Stronger explanatory power | Moderate R² |
+
+
+This summary highlights the progressive improvement in model complexity and predictive performance.
+
+---
+
+### 19.3 Regression Diagnostic Plots: Model 2
+
+```{r lm2_diagnostics, fig.height=9, fig.width=11, fig.cap="**Figure 11.** Diagnostic plots for Model 2 (CO ~ Temperature + Humidity + Hour + Season)."}
+
+air_aug <- augment(lm2, data = air)
+
+# Panel 1: Residuals vs Fitted
+p_res_fit <- ggplot(air_aug, aes(x = .fitted, y = .resid)) +
+  geom_point(alpha = 0.08, colour = "#457B9D", size = 0.8) +
+  geom_smooth(method = "loess", colour = "#E63946", linewidth = 1.2, se = FALSE) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "#2C3E50") +
+  labs(title = "Residuals vs. Fitted",
+       x = "Fitted Values", y = "Residuals") +
+  theme_air(base_size = 10)
+
+# Panel 2: Q-Q plot
+p_qq <- ggplot(air_aug, aes(sample = .std.resid)) +
+  stat_qq(alpha = 0.15, colour = "#457B9D", size = 0.8) +
+  stat_qq_line(colour = "#E63946", linewidth = 1.2) +
+  labs(title = "Normal Q-Q Plot",
+       x = "Theoretical Quantiles", y = "Standardised Residuals") +
+  theme_air(base_size = 10)
+
+# Panel 3: Scale-Location
+p_scale_loc <- ggplot(air_aug, aes(x = .fitted, y = sqrt(abs(.std.resid)))) +
+  geom_point(alpha = 0.08, colour = "#2A9D8F", size = 0.8) +
+  geom_smooth(method = "loess", colour = "#E63946", linewidth = 1.2, se = FALSE) +
+  labs(title = "Scale-Location",
+       x = "Fitted Values", y = "√|Standardised Residuals|") +
+  theme_air(base_size = 10)
+
+# Panel 4: Residuals vs Leverage
+p_cook <- ggplot(air_aug, aes(x = .hat, y = .std.resid)) +
+  geom_point(aes(size = .cooksd), alpha = 0.3, colour = "#B85C38") +
+  geom_hline(yintercept = c(-3, 3), linetype = "dashed", colour = "#E63946") +
+  labs(title = "Residuals vs. Leverage",
+       x = "Leverage (h)", y = "Standardised Residuals",
+       size = "Cook's D") +
+  theme_air(base_size = 10)
+
+(p_res_fit | p_qq) / (p_scale_loc | p_cook) +
+  plot_annotation(
+    title   = "Model 2 Regression Diagnostics",
+    subtitle = "Top-left: non-linearity check | Top-right: normality | Bottom: homoscedasticity & influence",
+    theme   = theme(plot.title    = element_text(face = "bold", size = 14,
+                                                  colour = "#2C3E50", hjust = 0.5),
+                    plot.subtitle = element_text(colour = "#555555", hjust = 0.5))
+  )
+```
+
+The diagnostic plots indicate that:
+
+- Residuals are approximately centered around zero, supporting linearity
+- The Q-Q plot shows mild deviations from normality at the tails
+- No severe heteroscedasticity is observed in the Scale-Location plot
+- Cook’s distance indicates a small number of influential observations, but none that dominate the model
+
+Overall, Model 2 satisfies the key assumptions of linear regression reasonably well.
+
+---
+
+### 19.4 Predictions for New / Hypothetical Observations
+
+```{r predictions}
+new_obs <- tibble(
+  Scenario          = c("Cold Winter morning (rush hour)",
+                        "Hot Summer afternoon",
+                        "Mild Autumn evening (rush hour)",
+                        "Cool Spring midday"),
+  Temperature       = c(2,  38,  15,  18),
+  Relative_Humidity = c(80, 20,  60,  50),
+  Hour              = c(8,  14,  18,  12),
+  Season            = factor(c("Winter", "Summer", "Autumn", "Spring"),
+                             levels = c("Winter", "Spring", "Summer", "Autumn"))
+)
+
+pred_co  <- predict(lm2, newdata = new_obs, interval = "prediction")
+
+new_obs %>%
+  mutate(
+    `Predicted CO (mg/m³)` = round(pred_co[, 1], 2),
+    `CO 95% PI`            = paste0("[", round(pred_co[, 2], 2),
+                                    ", ", round(pred_co[, 3], 2), "]"),
+  ) %>%
+select(Scenario, Temperature, Relative_Humidity, Hour, Season,
+       `Predicted CO (mg/m³)`, `CO 95% PI`) %>%
+  kable(caption = "Table 14. Model Predictions for Four Hypothetical Scenarios") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = TRUE, font_size = 11) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white") %>%
+  row_spec(c(1, 3), background = "#FFF5F5") %>%
+  footnote(general = "PI = Prediction Interval (individual observation). Winter cold-rush scenario produces the highest predicted CO.",,
+           general_title = "Note: ")
+```
+
+```{r pred_viz, fig.height=6.5, fig.width=8, fig.cap="**Figure 12.** Predicted CO concentrations for four hypothetical scenarios with 95% prediction intervals."}
+
+pred_df <- new_obs %>%
+  bind_cols(as_tibble(pred_co)) %>%
+  rename(Predicted = fit, Lower = lwr, Upper = upr) %>%
+  mutate(
+    Scenario = stringr::str_wrap(Scenario, width = 30),
+    Scenario = forcats::fct_reorder(Scenario, Predicted)
+  )
+
+mean_co <- mean(air$CO_GT, na.rm = TRUE)
+
+ggplot(pred_df, aes(x = Predicted, y = Scenario, colour = Season)) +
+  
+  geom_vline(xintercept = mean_co,
+             linetype = "dashed", colour = "#888888", linewidth = 0.8) +
+  
+  geom_errorbarh(aes(xmin = Lower, xmax = Upper),
+                 height = 0.3, linewidth = 1.1) +
+  
+  geom_point(size = 5) +
+  
+  scale_colour_manual(values = season_pal) +
+  
+  annotate("text",
+           x = mean_co + 0.15,
+           y = 0.7,
+           label = "Overall\nMean CO",
+           size = 3.3, colour = "#888888", hjust = 0) +
+  
+  labs(
+    title    = "Model 2 — Predicted CO for Four Hypothetical Scenarios",
+    subtitle = "Horizontal bars = 95% prediction intervals | Dashed line = dataset mean CO",
+    x        = "Predicted CO Concentration (mg/m³)",
+    y        = NULL,
+    colour   = "Season"
+  ) +
+  
+  theme_air() +
+  
+  theme(
+    plot.margin = margin(t = 40, r = 20, b = 30, l = 120),
+    
+    plot.title = element_text(hjust = 0.5, face = "bold", margin = margin(b = 8)),
+    plot.subtitle = element_text(hjust = 0.5, margin = margin(b = 12)),
+    
+    axis.text.y = element_text(size = 10)
+  )
+```
+
+---
+
+## 20. Final Discussion and Conclusions
+
+This study provides a comprehensive analysis of air pollution dynamics using exploratory analysis, statistical testing, and regression modeling.
+
+Overall, results consistently show that:
+- Pollution levels are strongly influenced by both seasonal and human activity patterns.
+- NOx exhibits the highest variability and is strongly linked to traffic conditions.
+- Meteorological factors, particularly temperature, play a significant role in pollutant dispersion.
+- Predictive models confirm that combining environmental and temporal variables significantly improves accuracy.
+
+These findings demonstrate that air quality is not random but is associated with measurable environmental and behavioral factors.
+
+---
+
+### 20.1 Summary of Findings
+
+<div class="section-box">
+
+| Analysis | Key Finding |
+|----------|-------------|
+| **Descriptive Statistics** | NOx has the highest variability (CV ≈ 80%), while NO₂ is the most symmetric. CO and NOx are heavily right-skewed with meaningful outlier proportions. |
+| **Hypothesis 1 (ANOVA)** | CO differs significantly across seasons; Summer is cleanest, Winter most polluted. |
+| **Hypothesis 2 (Pearson)** | Temperature and NO₂ are negatively correlated (r ≈ −0.50, p < 0.001). |
+| **Hypothesis 3 (t-test)** | Rush-hour NOx is significantly higher than non-rush-hour NOx (Cohen's d ≈ medium-large). |
+| **Hypothesis 4 (Wilcoxon)** | Winter CO is significantly higher than Summer CO (large rank-biserial r). |
+| **Model 1 (Simple Reg.)** | Temperature alone explains ~25% of CO variance (R² ≈ 0.25). |
+| **Model 2 (Multiple Reg.)** | Adding humidity, hour, and season raises explanatory power (Adj. R² ≈ 0.40). |
+
+</div>
+
+---
+
+### 21.2 Practical Implications
+
+1. **Traffic management:** The statistically confirmed rush-hour NOx spike (H3) supports
+   time-based emissions controls such as congestion pricing or staggered work hours.
+2. **Winter air quality alerts:** Both the ANOVA (H1) and Wilcoxon (H4) tests confirm
+   Winter as the highest-risk season, indicating that early-warning systems and
+   heating-emission regulations should prioritise cold months.
+3. **Meteorological monitoring:** The robust temperature–NO₂ relationship (H2) suggests
+   that weather-based forecasting could reliably predict high-pollution days and trigger
+   proactive public health advisories.
+   
+---
+
+### 21.3 Limitations and Future Work
+
+- Sensor drift and calibration issues in the original dataset may introduce measurement
+  error that inflates residuals in the regression models.
+- The dataset spans only one year in a single Italian city; findings may not generalise.
+- Future work could incorporate spatial data, PM2.5 / PM10 measurements, and apply
+  machine learning methods (random forests, GAMs) for improved predictive accuracy.
+---
